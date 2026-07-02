@@ -191,7 +191,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.on('messageCreate', async (message) => {
- if (message.isDMBased() && !message.author.bot) {
+ if (message.channel.type === ChannelType.DM && !message.author.bot) {
  const ticketChannelId = activeTickets.get(message.author.id);
  
  if (ticketChannelId) {

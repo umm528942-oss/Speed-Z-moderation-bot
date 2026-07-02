@@ -33,11 +33,15 @@ const client = new Client({
  ],
 });
 
+// FIX: Catch unhandled rejections so the bot doesn't crash
+process.on('unhandledRejection', (error) => {
+ console.error('Unhandled rejection:', error);
+});
+
 const commands = new Collection();
 const activeTickets = new Map();
-let ticketSystemEnabled = true; // Track if ticket system is enabled
+let ticketSystemEnabled = true;
 
-// Utility functions
 function getWarningsFile(guildId) {
  return `warnings_${guildId}.json`;
 }
@@ -170,12 +174,12 @@ async function createTicket(user, guild) {
  }
 }
 
-client.on('ready', () => {
+// FIX: renamed 'ready' to 'clientReady'
+client.on('clientReady', () => {
  console.log(`✅ Bot logged in as ${client.user.tag}`);
  client.user.setActivity('S?help', { type: 'WATCHING' });
 });
 
-// Handle button interactions
 client.on('interactionCreate', async (interaction) => {
  if (interaction.isButton()) {
  if (interaction.customId === 'open_ticket_button') {
@@ -187,7 +191,6 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.on('messageCreate', async (message) => {
- // Handle modmail replies in DMs
  if (message.isDMBased() && !message.author.bot) {
  const ticketChannelId = activeTickets.get(message.author.id);
  
@@ -228,32 +231,23 @@ client.on('messageCreate', async (message) => {
  }
 
  try {
- // MODMAIL
  if (command === 'modmail') {
  const result = await createTicket(message.author, guild);
  return message.reply(result.message);
  }
 
- // TICKETPANEL - Send button panel to channel
  if (command === 'ticketpanel') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
-
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  try {
  const panelChannel = await client.channels.fetch(TICKET_PANEL_CHANNEL_ID).catch(() => null);
- if (!panelChannel || !panelChannel.isTextBased()) {
- return message.reply('❌ Ticket panel channel not found.');
- }
-
+ if (!panelChannel || !panelChannel.isTextBased()) return message.reply('❌ Ticket panel channel not found.');
  const panelEmbed = new EmbedBuilder()
  .setTitle('📬 Support Ticket System')
  .setDescription('Click the button below to open a support ticket. Our team will assist you as soon as possible.')
  .setColor(0x5865F2)
  .setFooter({ text: `${client.user.username}` })
  .setTimestamp();
-
  const row = new ActionRowBuilder()
  .addComponents(
  new ButtonBuilder()
@@ -262,7 +256,6 @@ client.on('messageCreate', async (message) => {
  .setStyle(ButtonStyle.Primary)
  .setEmoji('📬')
  );
-
  await panelChannel.send({ embeds: [panelEmbed], components: [row] });
  return message.reply('✅ Ticket panel sent to the designated channel.');
  } catch (error) {
@@ -271,32 +264,17 @@ client.on('messageCreate', async (message) => {
  }
  }
 
- // TICKETSYSTEM - Toggle ticket system on/off
  if (command === 'ticketsystem') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
-
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  const action = args[0]?.toLowerCase();
- if (!action || !['on', 'off', 'toggle'].includes(action)) {
- return message.reply('Usage: `S?ticketsystem <on|off|toggle>`');
- }
-
- if (action === 'toggle') {
- ticketSystemEnabled = !ticketSystemEnabled;
- } else if (action === 'on') {
- ticketSystemEnabled = true;
- } else if (action === 'off') {
- ticketSystemEnabled = false;
- }
-
+ if (!action || !['on', 'off', 'toggle'].includes(action)) return message.reply('Usage: `S?ticketsystem <on|off|toggle>`');
+ if (action === 'toggle') ticketSystemEnabled = !ticketSystemEnabled;
+ else if (action === 'on') ticketSystemEnabled = true;
+ else if (action === 'off') ticketSystemEnabled = false;
  try {
  const statusChannel = await client.channels.fetch(TICKET_STATUS_CHANNEL_ID).catch(() => null);
- if (!statusChannel || !statusChannel.isTextBased()) {
- return message.reply('❌ Ticket status channel not found.');
- }
-
+ if (!statusChannel || !statusChannel.isTextBased()) return message.reply('❌ Ticket status channel not found.');
  const statusEmbed = new EmbedBuilder()
  .setTitle('🎫 Ticket System Status')
  .setDescription(ticketSystemEnabled ? '✅ **ENABLED** - Users can open support tickets.' : '❌ **DISABLED** - Ticket system is currently offline.')
@@ -307,7 +285,6 @@ client.on('messageCreate', async (message) => {
  )
  .setFooter({ text: `${client.user.username}` })
  .setTimestamp();
-
  await statusChannel.send({ embeds: [statusEmbed] });
  return message.reply(`✅ Ticket system is now **${ticketSystemEnabled ? 'ENABLED' : 'DISABLED'}**.`);
  } catch (error) {
@@ -316,67 +293,45 @@ client.on('messageCreate', async (message) => {
  }
  }
 
- // MUTE (formerly timeout)
  if (command === 'mute') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.ModerateMembers)) {
- return message.reply('❌ You need `Moderate Members` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.ModerateMembers)) return message.reply('❌ You need `Moderate Members` permission.');
  const user = message.mentions.members.first();
  const duration = args[1];
  const reason = args.slice(2).join(' ') || 'No reason provided';
- if (!user || !duration) {
- return message.reply('Usage: `S?mute @user <duration> <reason> [proof]`');
- }
+ if (!user || !duration) return message.reply('Usage: `S?mute @user <duration> <reason> [proof]`');
  const durationMs = parseDuration(duration);
- if (!durationMs) {
- return message.reply('❌ Invalid duration format. Use: 5m, 1h, 2d');
- }
+ if (!durationMs) return message.reply('❌ Invalid duration format. Use: 5m, 1h, 2d');
  await user.timeout(durationMs, reason);
  const proofUrl = getProofUrl(message);
  await logModAction(guild, user.user, 'mute', reason, member.user, duration, 1, proofUrl);
  return message.reply(`✅ ${user} has been muted for ${duration}.`);
  }
 
- // UNMUTE
  if (command === 'unmute') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.ModerateMembers)) {
- return message.reply('❌ You need `Moderate Members` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.ModerateMembers)) return message.reply('❌ You need `Moderate Members` permission.');
  const user = message.mentions.members.first();
  const reason = args.slice(1).join(' ') || 'No reason provided';
- if (!user) {
- return message.reply('Usage: `S?unmute @user [reason]`');
- }
+ if (!user) return message.reply('Usage: `S?unmute @user [reason]`');
  await user.timeout(null, reason);
  await logModAction(guild, user.user, 'unmute', reason, member.user);
  return message.reply(`✅ ${user} has been unmuted.`);
  }
 
- // BAN
  if (command === 'ban') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.BanMembers)) {
- return message.reply('❌ You need `Ban Members` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.BanMembers)) return message.reply('❌ You need `Ban Members` permission.');
  const user = message.mentions.users.first();
  const reason = args.slice(1).join(' ') || 'No reason provided';
- if (!user) {
- return message.reply('Usage: `S?ban @user <reason> [proof]`');
- }
+ if (!user) return message.reply('Usage: `S?ban @user <reason> [proof]`');
  await guild.bans.create(user, { reason });
  const proofUrl = getProofUrl(message);
  await logModAction(guild, user, 'ban', reason, member.user, null, 1, proofUrl);
  return message.reply(`✅ ${user.username} has been banned.`);
  }
 
- // UNBAN
  if (command === 'unban') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.BanMembers)) {
- return message.reply('❌ You need `Ban Members` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.BanMembers)) return message.reply('❌ You need `Ban Members` permission.');
  const userId = args[0];
- if (!userId) {
- return message.reply('Usage: `S?unban <userID>`');
- }
+ if (!userId) return message.reply('Usage: `S?unban <userID>`');
  try {
  const user = await client.users.fetch(userId);
  await guild.bans.remove(user);
@@ -387,63 +342,40 @@ client.on('messageCreate', async (message) => {
  }
  }
 
- // KICK
  if (command === 'kick') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers)) {
- return message.reply('❌ You need `Kick Members` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers)) return message.reply('❌ You need `Kick Members` permission.');
  const user = message.mentions.members.first();
  const reason = args.slice(1).join(' ') || 'No reason provided';
- if (!user) {
- return message.reply('Usage: `S?kick @user <reason>`');
- }
+ if (!user) return message.reply('Usage: `S?kick @user <reason>`');
  await user.kick(reason);
  const proofUrl = getProofUrl(message);
  await logModAction(guild, user.user, 'kick', reason, member.user, null, 1, proofUrl);
  return message.reply(`✅ ${user} has been kicked.`);
  }
 
- // WARN
  if (command === 'warn') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ManageMessages)) {
- return message.reply('❌ You need `Kick Members` and `Manage Messages` permissions.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ManageMessages)) return message.reply('❌ You need `Kick Members` and `Manage Messages` permissions.');
  const user = message.mentions.members.first();
  const reason = args.slice(1).join(' ') || 'No reason provided';
- if (!user) {
- return message.reply('Usage: `S?warn @user <reason> [proof]`');
- }
+ if (!user) return message.reply('Usage: `S?warn @user <reason> [proof]`');
  const warnings = loadWarnings(guild.id);
  const userId = user.id;
- if (!warnings[userId]) {
- warnings[userId] = { count: 0, history: [] };
- }
+ if (!warnings[userId]) warnings[userId] = { count: 0, history: [] };
  warnings[userId].count += 1;
- warnings[userId].history.push({
- reason,
- timestamp: new Date().toISOString(),
- moderator: member.user.username,
- });
+ warnings[userId].history.push({ reason, timestamp: new Date().toISOString(), moderator: member.user.username });
  saveWarnings(guild.id, warnings);
  const proofUrl = getProofUrl(message);
  await logModAction(guild, user.user, 'warn', reason, member.user, null, warnings[userId].count, proofUrl);
  return message.reply(`✅ ${user} has been warned. (Offense #${warnings[userId].count})`);
  }
 
- // WARNINGS
  if (command === 'warnings') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ManageMessages)) {
- return message.reply('❌ You need `Kick Members` and `Manage Messages` permissions.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ManageMessages)) return message.reply('❌ You need `Kick Members` and `Manage Messages` permissions.');
  const user = message.mentions.members.first();
- if (!user) {
- return message.reply('Usage: `S?warnings @user`');
- }
+ if (!user) return message.reply('Usage: `S?warnings @user`');
  const warnings = loadWarnings(guild.id);
  const userId = user.id;
- if (!warnings[userId] || warnings[userId].count === 0) {
- return message.reply(`${user} has no warnings.`);
- }
+ if (!warnings[userId] || warnings[userId].count === 0) return message.reply(`${user} has no warnings.`);
  const embed = new EmbedBuilder()
  .setTitle(`Warnings for ${user.user.username}`)
  .setColor(0x808080)
@@ -451,43 +383,28 @@ client.on('messageCreate', async (message) => {
  .setFooter({ text: `${client.user.username}` })
  .setTimestamp();
  warnings[userId].history.forEach((warn, i) => {
- embed.addFields({
- name: `Warning #${i + 1}`,
- value: `**Reason:** ${warn.reason}\n**Moderator:** ${warn.moderator}\n**Date:** ${warn.timestamp}`,
- inline: false,
- });
+ embed.addFields({ name: `Warning #${i + 1}`, value: `**Reason:** ${warn.reason}\n**Moderator:** ${warn.moderator}\n**Date:** ${warn.timestamp}`, inline: false });
  });
  return message.reply({ embeds: [embed] });
  }
 
- // CLEAR
  if (command === 'clear') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.ManageMessages)) {
- return message.reply('❌ You need `Manage Messages` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.ManageMessages)) return message.reply('❌ You need `Manage Messages` permission.');
  const amount = parseInt(args[0]);
- if (!amount || amount <= 0) {
- return message.reply('❌ Amount must be greater than 0.');
- }
+ if (!amount || amount <= 0) return message.reply('❌ Amount must be greater than 0.');
  const deleted = await message.channel.bulkDelete(amount);
  return message.reply(`✅ Deleted ${deleted.size} messages.`);
  }
 
- // ROLE
  if (command === 'role') {
- if (!checkDiscordPerms(member, PermissionFlagsBits.ManageRoles)) {
- return message.reply('❌ You need `Manage Roles` permission.');
- }
+ if (!checkDiscordPerms(member, PermissionFlagsBits.ManageRoles)) return message.reply('❌ You need `Manage Roles` permission.');
  const user = message.mentions.members.first();
  const role = message.mentions.roles.first();
- if (!user || !role) {
- return message.reply('Usage: `S?role @user @role`');
- }
+ if (!user || !role) return message.reply('Usage: `S?role @user @role`');
  await user.roles.add(role);
  return message.reply(`✅ ${role} has been assigned to ${user}.`);
  }
 
- // USERINFO
  if (command === 'userinfo') {
  const user = message.mentions.members.first() || member;
  const embed = new EmbedBuilder()
@@ -506,7 +423,6 @@ client.on('messageCreate', async (message) => {
  return message.reply({ embeds: [embed] });
  }
 
- // SERVERINFO
  if (command === 'serverinfo') {
  const embed = new EmbedBuilder()
  .setTitle(`Server Info: ${guild.name}`)
@@ -525,94 +441,54 @@ client.on('messageCreate', async (message) => {
  return message.reply({ embeds: [embed] });
  }
 
- // SETPERMS - Single role
  if (command === 'setperms') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  const channel = message.mentions.channels.first();
  const roles = message.mentions.roles;
- if (!channel || roles.size === 0) {
- return message.reply('Usage: `S?setperms <#channel> <@role> [@role2] [@role3]...`');
- }
- for (const role of roles.values()) {
- await channel.permissionOverwrites.edit(role, { ViewChannel: true, SendMessages: false });
- }
- const roleList = roles.map(r => r.toString()).join(', ');
- return message.reply(`✅ ${roleList} can now view ${channel} but cannot send messages.`);
+ if (!channel || roles.size === 0) return message.reply('Usage: `S?setperms <#channel> <@role> [@role2] [@role3]...`');
+ for (const role of roles.values()) await channel.permissionOverwrites.edit(role, { ViewChannel: true, SendMessages: false });
+ return message.reply(`✅ ${roles.map(r => r.toString()).join(', ')} can now view ${channel} but cannot send messages.`);
  }
 
- // LOCKPERMS - Lock multiple roles
  if (command === 'lockperms') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  const channel = message.mentions.channels.first();
  const roles = message.mentions.roles;
- if (!channel || roles.size === 0) {
- return message.reply('Usage: `S?lockperms <#channel> <@role> [@role2] [@role3]...`');
- }
- for (const role of roles.values()) {
- await channel.permissionOverwrites.edit(role, { ViewChannel: false });
- }
- const roleList = roles.map(r => r.toString()).join(', ');
- return message.reply(`✅ ${roleList} can no longer view ${channel}.`);
+ if (!channel || roles.size === 0) return message.reply('Usage: `S?lockperms <#channel> <@role> [@role2] [@role3]...`');
+ for (const role of roles.values()) await channel.permissionOverwrites.edit(role, { ViewChannel: false });
+ return message.reply(`✅ ${roles.map(r => r.toString()).join(', ')} can no longer view ${channel}.`);
  }
 
- // OPENPERMS - Open multiple roles
  if (command === 'openperms') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  const channel = message.mentions.channels.first();
  const roles = message.mentions.roles;
- if (!channel || roles.size === 0) {
- return message.reply('Usage: `S?openperms <#channel> <@role> [@role2] [@role3]...`');
- }
- for (const role of roles.values()) {
- await channel.permissionOverwrites.edit(role, { ViewChannel: true, SendMessages: true });
- }
- const roleList = roles.map(r => r.toString()).join(', ');
- return message.reply(`✅ ${roleList} can now view and send messages in ${channel}.`);
+ if (!channel || roles.size === 0) return message.reply('Usage: `S?openperms <#channel> <@role> [@role2] [@role3]...`');
+ for (const role of roles.values()) await channel.permissionOverwrites.edit(role, { ViewChannel: true, SendMessages: true });
+ return message.reply(`✅ ${roles.map(r => r.toString()).join(', ')} can now view and send messages in ${channel}.`);
  }
 
- // VIEWONLY - Set multiple roles to view-only (all other perms off)
  if (command === 'viewonly') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
- if (!isFounder) {
- return message.reply('❌ This command is for Founder only.');
- }
+ if (!isFounder) return message.reply('❌ This command is for Founder only.');
  const channel = message.mentions.channels.first();
  const roles = message.mentions.roles;
- if (!channel || roles.size === 0) {
- return message.reply('Usage: `S?viewonly <#channel> <@role> [@role2] [@role3]...`');
- }
- const denyPerms = Object.values(PermissionFlagsBits).filter(perm => 
- typeof perm === 'bigint' && 
- perm !== PermissionFlagsBits.ViewChannel && 
- perm !== PermissionFlagsBits.ReadMessageHistory
- );
+ if (!channel || roles.size === 0) return message.reply('Usage: `S?viewonly <#channel> <@role> [@role2] [@role3]...`');
+ const denyPerms = Object.values(PermissionFlagsBits).filter(perm => typeof perm === 'bigint' && perm !== PermissionFlagsBits.ViewChannel && perm !== PermissionFlagsBits.ReadMessageHistory);
  for (const role of roles.values()) {
- const permOverwrite = {
- ViewChannel: true,
- ReadMessageHistory: true,
- };
+ const permOverwrite = { ViewChannel: true, ReadMessageHistory: true };
  denyPerms.forEach(perm => {
  const permName = Object.keys(PermissionFlagsBits).find(key => PermissionFlagsBits[key] === perm);
- if (permName) {
- permOverwrite[permName] = false;
- }
+ if (permName) permOverwrite[permName] = false;
  });
  await channel.permissionOverwrites.edit(role, permOverwrite);
  }
- const roleList = roles.map(r => r.toString()).join(', ');
- return message.reply(`✅ ${roleList} can now only view and read message history in ${channel}. All other permissions are disabled.`);
+ return message.reply(`✅ ${roles.map(r => r.toString()).join(', ')} can now only view and read message history in ${channel}.`);
  }
 
- // HELP
  if (command === 'help') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
  const embed = new EmbedBuilder()
@@ -620,37 +496,17 @@ client.on('messageCreate', async (message) => {
  .setColor(0x5865F2)
  .setFooter({ text: `${client.user.username}` })
  .setTimestamp();
- embed.addFields(
- {
- name: '📬 Support',
- value: '`S?modmail` - Open a support ticket',
- inline: false,
- }
- );
+ embed.addFields({ name: '📬 Support', value: '`S?modmail` - Open a support ticket', inline: false });
  if (hasRole) {
  embed.addFields(
- {
- name: '📋 Moderation',
- value: '`S?mute @user <duration> <reason> [proof]`\n`S?unmute @user [reason]`\n`S?ban @user <reason> [proof]`\n`S?unban <userID>`\n`S?kick @user <reason>`\n`S?warn @user <reason> [proof]`\n`S?warnings @user`\n`S?clear <amount>`\n`S?role @user @role`',
- inline: false,
- },
- {
- name: '🔍 Utility',
- value: '`S?userinfo [@user]`\n`S?serverinfo`',
- inline: false,
- }
+ { name: '📋 Moderation', value: '`S?mute @user <duration> <reason> [proof]`\n`S?unmute @user [reason]`\n`S?ban @user <reason> [proof]`\n`S?unban <userID>`\n`S?kick @user <reason>`\n`S?warn @user <reason> [proof]`\n`S?warnings @user`\n`S?clear <amount>`\n`S?role @user @role`', inline: false },
+ { name: '🔍 Utility', value: '`S?userinfo [@user]`\n`S?serverinfo`', inline: false }
  );
  }
  if (isFounder) {
- embed.addFields({
- name: '👑 Founder Only',
- value: '`S?setperms <#channel> <@role> [@role2]...` - View only\n`S?viewonly <#channel> <@role> [@role2]...` - View & read history only\n`S?lockperms <#channel> <@role> [@role2]...` - Hide channel\n`S?openperms <#channel> <@role> [@role2]...` - Full access\n`S?ticketpanel` - Send ticket button panel\n`S?ticketsystem <on|off|toggle>` - Control ticket system',
- inline: false,
- });
+ embed.addFields({ name: '👑 Founder Only', value: '`S?setperms <#channel> <@role> [@role2]...` - View only\n`S?viewonly <#channel> <@role> [@role2]...` - View & read history only\n`S?lockperms <#channel> <@role> [@role2]...` - Hide channel\n`S?openperms <#channel> <@role> [@role2]...` - Full access\n`S?ticketpanel` - Send ticket button panel\n`S?ticketsystem <on|off|toggle>` - Control ticket system', inline: false });
  }
- if (!hasRole && !isFounder) {
- embed.setDescription('❌ You do not have permission to use any commands.');
- }
+ if (!hasRole && !isFounder) embed.setDescription('❌ You do not have permission to use any commands.');
  return message.reply({ embeds: [embed] });
  }
  } catch (error) {
@@ -664,11 +520,7 @@ function parseDuration(duration) {
  if (!match) return null;
  const amount = parseInt(match[1]);
  const unit = match[2];
- const ms = {
- m: amount * 60 * 1000,
- h: amount * 60 * 60 * 1000,
- d: amount * 24 * 60 * 60 * 1000,
- };
+ const ms = { m: amount * 60 * 1000, h: amount * 60 * 60 * 1000, d: amount * 24 * 60 * 60 * 1000 };
  return ms[unit] || null;
 }
 

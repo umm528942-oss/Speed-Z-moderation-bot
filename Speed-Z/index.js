@@ -13,6 +13,7 @@ const TICKET_SERVER_ID = '1522047199133958274';
 const TICKET_CATEGORY_ID = '1522054281023459391';
 const TICKET_PANEL_CHANNEL_ID = '1522053070668955728';
 const TICKET_STATUS_CHANNEL_ID = '1522047484644561037';
+const OWNER_TICKET_CATEGORY_ID = '1522081308497543220';
 
 const ROLE_IDS = {
  'Trial Support': '1504483925546897619',
@@ -489,6 +490,34 @@ client.on('messageCreate', async (message) => {
  return message.reply(`✅ ${roles.map(r => r.toString()).join(', ')} can now only view and read message history in ${channel}.`);
  }
 
+ if (command === 'closeticket') {
+ const isOwner = member.roles.cache.has(ROLE_IDS['Founder']) || member.roles.cache.has(ROLE_IDS['Manager']);
+ if (!isOwner) return message.reply('❌ This command is for Founders and Managers only.');
+ // Find whose ticket this channel belongs to
+ let ticketOwnerId = null;
+ for (const [userId, channelId] of activeTickets.entries()) {
+ if (channelId === message.channel.id) {
+ ticketOwnerId = userId;
+ break;
+ }
+ }
+ if (!ticketOwnerId) return message.reply('❌ This is not an active ticket channel.');
+ const reason = args.slice(0).join(' ') || 'No reason provided';
+ try {
+ const ticketUser = await client.users.fetch(ticketOwnerId).catch(() => null);
+ if (ticketUser) {
+ await ticketUser.send(`✅ Your support ticket has been closed by ${member.user.username}. Reason: ${reason}`).catch(() => null);
+ }
+ activeTickets.delete(ticketOwnerId);
+ await message.channel.send(`🔒 Ticket closed by <@${member.user.id}>. Reason: ${reason}\nThis channel will be deleted in 5 seconds.`);
+ setTimeout(() => message.channel.delete().catch(() => null), 5000);
+ } catch (error) {
+ console.error('Error closing ticket:', error);
+ return message.reply('❌ Failed to close ticket.');
+ }
+ return;
+ }
+
  if (command === 'help') {
  const isFounder = member.roles.cache.has(ROLE_IDS['Founder']);
  const embed = new EmbedBuilder()
@@ -504,7 +533,7 @@ client.on('messageCreate', async (message) => {
  );
  }
  if (isFounder) {
- embed.addFields({ name: '👑 Founder Only', value: '`S?setperms <#channel> <@role> [@role2]...` - View only\n`S?viewonly <#channel> <@role> [@role2]...` - View & read history only\n`S?lockperms <#channel> <@role> [@role2]...` - Hide channel\n`S?openperms <#channel> <@role> [@role2]...` - Full access\n`S?ticketpanel` - Send ticket button panel\n`S?ticketsystem <on|off|toggle>` - Control ticket system', inline: false });
+ embed.addFields({ name: '👑 Founder Only', value: '`S?setperms <#channel> <@role> [@role2]...` - View only\n`S?viewonly <#channel> <@role> [@role2]...` - View & read history only\n`S?lockperms <#channel> <@role> [@role2]...` - Hide channel\n`S?openperms <#channel> <@role> [@role2]...` - Full access\n`S?ticketpanel` - Send ticket button panel\n`S?ticketsystem <on|off|toggle>` - Control ticket system\n`S?closeticket [reason]` - Close and delete a ticket channel', inline: false });
  }
  if (!hasRole && !isFounder) embed.setDescription('❌ You do not have permission to use any commands.');
  return message.reply({ embeds: [embed] });
